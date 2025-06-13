@@ -11,7 +11,7 @@ import ExerciseCard, { Exercise } from '@/components/ExerciseCard'
 import { Input } from '@/components/ui/input'
 
 export default function CreateTrainingLogPage() {
-  const { user, isLoading, session } = useAuth()
+  const { user, isLoading } = useAuth()
   const router = useRouter()
 
   const [type, setType] = useState<'fitness' | 'circuit'>('fitness')
@@ -21,6 +21,7 @@ export default function CreateTrainingLogPage() {
   const [defaultWeight, setDefaultWeight] = useState(0)
   const [defaultRest, setDefaultRest] = useState(60)
   const [exercises, setExercises] = useState<Exercise[]>([])
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -58,10 +59,8 @@ export default function CreateTrainingLogPage() {
   }
 
   const handleSave = async () => {
-    if (!user) {
-      alert('Niet ingelogd')
-      return
-    }
+    if (!user || isSaving) return
+    setIsSaving(true)
 
     const training = {
       id: uuidv4(),
@@ -79,6 +78,8 @@ export default function CreateTrainingLogPage() {
     } catch (err) {
       console.error('❌ Fout bij opslaan:', err)
       alert('Fout bij opslaan')
+    } finally {
+      setIsSaving(false)
     }
   }
 
@@ -154,8 +155,12 @@ export default function CreateTrainingLogPage() {
           + Oefening toevoegen
         </Button>
 
-        <Button onClick={handleSave} className="bg-lime-600 text-black mt-4">
-          ✅ Training opslaan
+        <Button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="bg-lime-600 text-black mt-4"
+        >
+          {isSaving ? 'Bezig met opslaan...' : '✅ Training opslaan'}
         </Button>
       </div>
     </div>

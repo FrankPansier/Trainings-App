@@ -1,104 +1,110 @@
-'use client'
+"use client";
 
-import { useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { supabase } from '@/lib/supabaseClient'
-import { v4 as uuidv4 } from 'uuid'
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/providers/AuthProvider";
+import { supabase } from "@/lib/supabaseClient";
+import { v4 as uuidv4 } from "uuid";
+import { saveTraining } from "@/lib/saveTraining";
+import { Button } from "@/components/ui/button";
+import ExerciseCard, { Exercise } from "@/components/ExerciseCard";
 
 export default function HerhaalTrainingPage() {
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  const trainingId = searchParams.get('id')
+  const { user, isLoading } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
 
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [userId, setUserId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true);
+  const [oefeningen, setOefeningen] = useState<Exercise[]>([]);
+  const [notes, setNotes] = useState("");
+  const [type, setType] = useState("fitness");
 
   useEffect(() => {
-    const fetchAndCopy = async () => {
-      if (!trainingId) return
+    if (!isLoading && !user) router.push("/login");
+  }, [isLoading, user, router]);
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
-      if (!user) {
-        setError('Niet ingelogd')
-        return
+  useEffect(() => {
+    const fetchTraining = async () => {
+      if (!id || !user) return;
+
+      const { data, error } = await supabase
+        .from("trainings")
+        .select("id, type, notes, exercises(*)")
+        .eq("id", id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (error || !data) {
+        console.error("Fout bij ophalen training:", error);
+        return;
       }
 
-      setUserId(user.id)
+      const aangepasteOefeningen = data.exercises.map((oef: Exercise) => {
+        const gehaald =
+          oef.performed_reps?.length > 0 &&
+          oef.performed_reps.every((r: number) => r >= oef.reps);
 
-      // Stap 1: Haal originele training op
-      const { data: training, error: trainingError } = await supabase
-        .from('trainings')
-        .select('*, exercises(*)')
-        .eq('id', trainingId)
-        .single()
+        return {
+          ...oef,
+          id: uuidv4(),
+          training_id: undefined,
+          previous_exercise_id: oef.id,
+          weight: gehaald ? oef.weight + (oef.overload ?? 2.5) : oef.weight,
+          performedReps: [],
+        };
+      });
 
-      if (trainingError || !training) {
-        setError('Kon originele training niet vinden')
-        setLoading(false)
-        return
-      }
+      setOefeningen(aangepasteOefeningen);
+      setNotes(data.notes ?? "");
+      setType(data.type ?? "fitness");
+      setLoading(false);
+    };
 
-      // Stap 2: Nieuwe training aanmaken met nieuwe ID
-      const newTrainingId = uuidv4()
-      const { error: insertTrainingError } = await supabase.from('trainings').insert([
-        {
-          id: newTrainingId,
-          user_id: user.id,
-          type: training.type,
-          date: new Date().toISOString(),
-          notes: training.notes || '',
-        },
-      ])
+    fetchTraining();
+  }, [id, user]);
 
-      if (insertTrainingError) {
-        setError('Fout bij aanmaken training')
-        setLoading(false)
-        return
-      }
+  const handleSave = async () => {
+    if (!user) return;
 
-      // Stap 3: Oefeningen kopiëren
-      const oefeningen = training.exercises.map((oef: any) => ({
-        id: uuidv4(),
-        training_id: newTrainingId,
-        user_id: user.id,
-        name: oef.name,
-        sets: oef.sets,
-        reps: oef.reps,
-        weight: oef.weight,
-        rest: oef.rest,
-        overload: oef.overload,
-        performed_reps: '',
-        notes: oef.notes,
-        use_custom: oef.use_custom,
-      }))
+    const nieuweTraining = {
+      id: uuidv4(),
+      userId: user.id,
+      date: new Date().toISOString(),
+      type,
+      notes,
+      exercises: oefeningen,
+    };
 
-      const { error: insertExercisesError } = await supabase
-        .from('exercises')
-        .insert(oefeningen)
+    await saveTraining(nieuweTraining);
+    router.push("/dashboard");
+  };
 
-      if (insertExercisesError) {
-        setError('Fout bij kopiëren van oefeningen')
-        setLoading(false)
-        return
-      }
+  if (loading || isLoading) return <p className="text-white text-center mt-10">Laden...</p>;
 
-      // Stap 4: Doorsturen naar bewerkpagina (of detailpagina)
-      router.push(`/training/${newTrainingId}`)
-    }
-
-    fetchAndCopy()
-  }, [trainingId])
-
-  if (loading) {
-    return <p className="text-white text-center mt-10">Training wordt geladen en gekopieerd...</p>
-  }
-
-  if (error) {
-    return <p className="text-red-500 text-center mt-10">{error}</p>
-  }
-
-  return null
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-6 text-white">
+      <h1 className="text-2xl font-bold mb-4">Herhaal training</h1>
+      {oefeningen.map((exercise, index) => (
+        <ExerciseCard
+          key={index}
+          index={index}
+          exercise={exercise}
+          onChange={(i, oef) => {
+            const kopie = [...oefeningen];
+            kopie[i] = oef;
+            setOefeningen(kopie);
+          }}
+          onRemove={(i) => {
+            const kopie = [...oefeningen];
+            kopie.splice(i, 1);
+            setOefeningen(kopie);
+          }}
+        />
+      ))}
+      <Button onClick={handleSave} className="mt-6 bg-lime-600 text-black">
+        ✅ Opslaan als nieuwe training
+      </Button>
+    </div>
+  );
 }

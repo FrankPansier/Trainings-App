@@ -20,6 +20,8 @@ export default function DashboardPage() {
   const [trainings, setTrainings] = useState<Training[]>([])
   const [loadingTrainings, setLoadingTrainings] = useState(true)
 
+  console.log('Ingelogde user ID:', user?.id)
+
   // 🔐 Redirect naar login als user niet is ingelogd
   useEffect(() => {
     if (!isLoading && !user) {
@@ -33,14 +35,23 @@ export default function DashboardPage() {
 
       const { data, error } = await supabase
         .from('trainings')
-        .select('id, type, date, notes, exercises(id)')
+        .select(`
+          id,
+          type,
+          date,
+          notes,
+          exercises (
+            id
+          )
+        `)
         .eq('user_id', user.id)
         .order('date', { ascending: false })
         .limit(10)
 
       if (error) {
-        console.error('Fout bij ophalen trainingen:', error.message)
+        console.error('❌ Fout bij ophalen trainingen:', error.message)
       } else {
+        console.log('✅ Trainings opgehaald:', data)
         setTrainings(data as Training[])
       }
 
@@ -65,7 +76,6 @@ export default function DashboardPage() {
         >
           ➕ Nieuwe training aanmaken
         </Link>
-
         <Link
           href="/trainings"
           className="flex-1 bg-blue-600 hover:bg-blue-700 text-center py-3 rounded"
@@ -78,7 +88,6 @@ export default function DashboardPage() {
         <h2 className="text-xl font-semibold mb-3">📋 Recente trainingen</h2>
 
         {loadingTrainings && <p>Laden...</p>}
-
         {!loadingTrainings && trainings.length === 0 && (
           <p className="text-gray-400">Nog geen trainingen gevonden.</p>
         )}
