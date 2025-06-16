@@ -13,3 +13,11 @@ export type Exercise = {
   useCustom: boolean
   previous_exercise_id?: string | null
 }
+export type Training = {
+  id: string
+  userId: string
+  date: string // ISO string
+  type: 'fitness' | 'circuit'
+  notes?: string
+  exercises: Exercise[]
+}

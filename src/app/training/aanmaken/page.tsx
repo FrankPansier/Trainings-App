@@ -9,12 +9,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import ExerciseCard, { Exercise } from '@/components/ExerciseCard'
 import { Input } from '@/components/ui/input'
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import Link from 'next/link'
 
 export default function CreateTrainingLogPage() {
   const { user, isLoading } = useAuth()
   const router = useRouter()
 
   const [type, setType] = useState<'fitness' | 'circuit'>('fitness')
+  const [name, setName] = useState('')
   const [notes, setNotes] = useState('')
   const [defaultSets, setDefaultSets] = useState(3)
   const [defaultReps, setDefaultReps] = useState(10)
@@ -22,6 +25,7 @@ export default function CreateTrainingLogPage() {
   const [defaultRest, setDefaultRest] = useState(60)
   const [exercises, setExercises] = useState<Exercise[]>([])
   const [isSaving, setIsSaving] = useState(false)
+  const [openItems, setOpenItems] = useState<string[]>([])
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -39,9 +43,11 @@ export default function CreateTrainingLogPage() {
 
   const removeExercise = (index: number) => {
     setExercises((prev) => prev.filter((_, i) => i !== index))
+    setOpenItems((prev) => prev.filter((item) => item !== `exercise-${index}`))
   }
 
   const addExercise = () => {
+    const newIndex = exercises.length
     setExercises((prev) => [
       ...prev,
       {
@@ -54,8 +60,24 @@ export default function CreateTrainingLogPage() {
         performedReps: [],
         notes: '',
         useCustom: false,
+        customSets: [],
+        customMode: false,
       },
     ])
+  }
+
+  const handleCustomToggle = (index: number, useCustom: boolean) => {
+    updateExercise(index, { ...exercises[index], useCustom })
+    const key = `exercise-${index}`
+    if (useCustom) {
+      setOpenItems((prev) => [...prev, key])
+    } else {
+      setOpenItems((prev) => prev.filter((item) => item !== key))
+    }
+  }
+
+  const toggleCustomMode = (index: number, mode: boolean) => {
+    updateExercise(index, { ...exercises[index], customMode: mode })
   }
 
   const handleSave = async () => {
@@ -67,6 +89,7 @@ export default function CreateTrainingLogPage() {
       userId: user.id,
       date: new Date().toISOString(),
       type,
+      name,
       notes,
       exercises,
     }
@@ -89,7 +112,10 @@ export default function CreateTrainingLogPage() {
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-6 text-white">
-      <h1 className="text-2xl font-bold">Training aanmaken</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold">Training aanmaken</h1>
+        <Link href="/dashboard" className="text-sm text-lime-400 underline">← Terug</Link>
+      </div>
 
       <div className="space-y-4 border border-lime-600 p-4 rounded-lg bg-zinc-900">
         <div>
@@ -104,35 +130,53 @@ export default function CreateTrainingLogPage() {
           </select>
         </div>
 
+        <div>
+          <label className="text-sm text-lime-400">Naam trainingsreeks:</label>
+          <Input
+            type="text"
+            placeholder="Bijv. Full-Body Workout A, Push, Pull..."
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
         <h2 className="text-lime-400 font-semibold text-sm">
           Standaardwaarden voor nieuwe oefeningen:
         </h2>
 
         <div className="grid grid-cols-2 gap-4">
-          <Input
-            type="number"
-            placeholder="Sets"
-            value={defaultSets}
-            onChange={(e) => setDefaultSets(Number(e.target.value))}
-          />
-          <Input
-            type="number"
-            placeholder="Reps"
-            value={defaultReps}
-            onChange={(e) => setDefaultReps(Number(e.target.value))}
-          />
-          <Input
-            type="number"
-            placeholder="Gewicht (kg)"
-            value={defaultWeight}
-            onChange={(e) => setDefaultWeight(Number(e.target.value))}
-          />
-          <Input
-            type="number"
-            placeholder="Rust (sec)"
-            value={defaultRest}
-            onChange={(e) => setDefaultRest(Number(e.target.value))}
-          />
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Aantal sets</label>
+            <Input
+              type="number"
+              value={defaultSets}
+              onChange={(e) => setDefaultSets(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Aantal herhalingen (reps)</label>
+            <Input
+              type="number"
+              value={defaultReps}
+              onChange={(e) => setDefaultReps(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Startgewicht (kg)</label>
+            <Input
+              type="number"
+              value={defaultWeight}
+              onChange={(e) => setDefaultWeight(Number(e.target.value))}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 mb-1 block">Rust tussen sets (seconden)</label>
+            <Input
+              type="number"
+              value={defaultRest}
+              onChange={(e) => setDefaultRest(Number(e.target.value))}
+            />
+          </div>
         </div>
 
         <Textarea
@@ -141,15 +185,68 @@ export default function CreateTrainingLogPage() {
           onChange={(e) => setNotes(e.target.value)}
         />
 
-        {exercises.map((exercise, i) => (
-          <ExerciseCard
-            key={i}
-            index={i}
-            exercise={exercise}
-            onChange={updateExercise}
-            onRemove={removeExercise}
-          />
-        ))}
+        <Accordion type="multiple" value={openItems} onValueChange={setOpenItems} className="space-y-2">
+          {exercises.map((exercise, i) => {
+            const accKey = `exercise-${i}`
+            return (
+              <AccordionItem value={accKey} key={i}>
+                <AccordionTrigger>
+                  <div className="flex flex-col w-full">
+                    <div className="flex justify-between items-center text-sm">
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="checkbox"
+                          checked={exercise.useCustom}
+                          onChange={(e) => handleCustomToggle(i, e.target.checked)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <span className="text-xs text-gray-300">Gebruik aangepaste instellingen</span>
+                        <input
+                          className="bg-transparent border-b border-lime-400 focus:outline-none text-white"
+                          placeholder="Naam"
+                          value={exercise.name}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => updateExercise(i, { ...exercise, name: e.target.value })}
+                        />
+                      </div>
+                      <div className="flex gap-1 items-center text-zinc-400">
+                        <span className="text-sm">kg:</span>
+                        <input
+                          type="number"
+                          className="bg-transparent border-b border-lime-400 w-16 focus:outline-none text-white"
+                          value={exercise.weight}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => updateExercise(i, { ...exercise, weight: parseFloat(e.target.value) })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </AccordionTrigger>
+                {exercise.useCustom && (
+                  <AccordionContent>
+                    <div className="mb-2">
+                      <label className="text-xs text-gray-400">
+                        <input
+                          type="checkbox"
+                          checked={exercise.customMode}
+                          onChange={(e) => toggleCustomMode(i, e.target.checked)}
+                          className="mr-2"
+                        />
+                        Aparte waarden per set (reps & gewicht)
+                      </label>
+                    </div>
+                    <ExerciseCard
+                      index={i}
+                      exercise={exercise}
+                      onChange={updateExercise}
+                      onRemove={removeExercise}
+                    />
+                  </AccordionContent>
+                )}
+              </AccordionItem>
+            )
+          })}
+        </Accordion>
 
         <Button variant="outline" type="button" onClick={addExercise}>
           + Oefening toevoegen

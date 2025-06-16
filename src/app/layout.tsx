@@ -26,7 +26,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={inter.className} style={{ colorScheme: 'dark' }}>
+  <html lang="en" suppressHydrationWarning>
+
       <body className="bg-background text-foreground">
         <NextTopLoader showSpinner={false} height={2} color="#2acf80" />
         <AuthProvider>

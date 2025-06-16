@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
-import { calculateOverload } from '@/lib/logic/calculateOverload'
 
 interface Exercise {
   id: string
@@ -15,9 +14,10 @@ interface Exercise {
   weight: number
   overload?: number
   performedReps?: (number | null)[]
+  notes?: string
+  useCustom?: boolean
 }
 
-/* -------------------- helpers -------------------- */
 const debounce = <T extends (...args: any[]) => void>(fn: T, ms = 600) => {
   let h: NodeJS.Timeout
   return (...args: Parameters<T>) => {
@@ -25,8 +25,8 @@ const debounce = <T extends (...args: any[]) => void>(fn: T, ms = 600) => {
     h = setTimeout(() => fn(...args), ms)
   }
 }
+
 const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-/* ------------------------------------------------- */
 
 export default function ExecuteTrainingPage() {
   const { id } = useParams()
@@ -34,6 +34,7 @@ export default function ExecuteTrainingPage() {
 
   const [training, setTraining] = useState<any>(null)
   const [performedReps, setPerformedReps] = useState<(number | null)[][]>([])
+  const [notes, setNotes] = useState<string[]>([])
   const [startTime] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const [restTimers, setRestTimers] = useState<Record<string, number | null>>({})
@@ -73,48 +74,26 @@ export default function ExecuteTrainingPage() {
     if (!id) return
 
     ;(async () => {
-      console.log('Training ID uit URL:', id)
-
       const { data: trainingData, error: trainingError } = await supabase
         .from('trainings')
         .select('*, exercises(*)')
         .eq('id', id)
         .single()
 
-      if (trainingError) {
-        console.error('❌ Fout bij ophalen training:', trainingError.message)
+      if (trainingError || !trainingData) {
+        console.error('❌ Fout bij ophalen training:', trainingError?.message)
         return
       }
 
-      if (!trainingData) {
-        console.warn('⚠️ Geen training gevonden.')
-        return
-      }
-
-      let exercises: Exercise[] = []
-
-      if (trainingData.exercises?.length) {
-        exercises = trainingData.exercises
-      } else {
-        const { data: fallbackExercises, error: fallbackError } = await supabase
-          .from('exercises')
-          .select('*')
-          .eq('training_id', id)
-
-        if (fallbackError) {
-          console.error('❌ Fout bij ophalen losse oefeningen:', fallbackError.message)
-        }
-        exercises = fallbackExercises ?? []
-      }
-
-      console.log('✅ Oefeningen opgehaald:', exercises)
+      const exercises: Exercise[] = trainingData.exercises ?? []
 
       setTraining({ ...trainingData, exercises })
       setPerformedReps(exercises.map((e) => Array(e.sets).fill(null)))
+      setNotes(exercises.map((e) => e.notes ?? ''))
 
-      const initialTimers: Record<string, number | null> = {}
-      exercises.forEach((e) => (initialTimers[e.id] = null))
-      setRestTimers(initialTimers)
+      const timers: Record<string, number | null> = {}
+      exercises.forEach((e) => (timers[e.id] = null))
+      setRestTimers(timers)
     })()
   }, [id])
 
@@ -125,47 +104,68 @@ export default function ExecuteTrainingPage() {
       const max = training.exercises[exIdx].reps
       cp[exIdx][setIdx] = cur === null ? max : cur > 0 ? cur - 1 : null
       if (cp[exIdx][setIdx] === 0) {
-        setRestTimers((rt) => ({
-          ...rt,
-          [training.exercises[exIdx].id]: 0,
-        }))
+        setRestTimers((rt) => ({ ...rt, [training.exercises[exIdx].id]: 0 }))
       }
       return cp
     })
   }
 
-  const saveField = useCallback(
-    debounce((exId: string, field: keyof Exercise, val: number) => {
-      supabase.from('exercises').update({ [field]: val }).eq('id', exId)
-    }),
-    []
-  )
-
-  const handleField = (exId: string, field: keyof Exercise, val: number) => {
-    setTraining((p: any) => {
-      if (!p) return p
-      const idx = p.exercises.findIndex((e: Exercise) => e.id === exId)
-      const exArr = [...p.exercises]
-      exArr[idx] = { ...exArr[idx], [field]: val }
-      return { ...p, exercises: exArr }
+  const handleNoteChange = (index: number, val: string) => {
+    setNotes((prev) => {
+      const cp = [...prev]
+      cp[index] = val
+      return cp
     })
-    saveField(exId, field, val)
   }
 
   const handleFinish = async () => {
     if (!training) return
-    const enriched = training.exercises.map((e: Exercise, i) =>
-      calculateOverload({ ...e, performedReps: performedReps[i].map((v) => v ?? 0) })
-    )
-    const { error } = await supabase.from('training_results').insert({
-      training_id: training.id,
-      user_id: training.user_id,
-      date: new Date().toISOString(),
-      exercises: enriched,
+    const newId = crypto.randomUUID()
+    const today = new Date().toISOString()
+
+    const newExercises = training.exercises.map((e: Exercise, i) => {
+      const repsDone = performedReps[i].map((r) => r ?? 0)
+      const success = repsDone.every((r) => r >= e.reps)
+      const newWeight = success ? e.weight + (e.overload ?? 2.5) : e.weight
+
+      return {
+        id: crypto.randomUUID(),
+        training_id: newId,
+        user_id: training.user_id,
+        name: e.name,
+        sets: e.sets,
+        reps: e.reps,
+        weight: newWeight,
+        rest: e.rest,
+        overload: e.overload ?? 2.5,
+        performed_reps: repsDone,
+        notes: notes[i],
+        use_custom: e.useCustom ?? false,
+        previous_exercise_id: e.id,
+      }
     })
 
-    if (error) alert('Opslaan mislukt')
-    else router.push('/dashboard')
+    const { error: tErr } = await supabase.from('trainings').insert({
+      id: newId,
+      user_id: training.user_id,
+      date: today,
+      type: training.type,
+      notes: training.notes ?? '',
+    })
+
+    if (tErr) {
+      alert('Fout bij opslaan training')
+      return
+    }
+
+    const { error: eErr } = await supabase.from('exercises').insert(newExercises)
+
+    if (eErr) {
+      alert('Fout bij opslaan oefeningen')
+      return
+    }
+
+    router.push('/dashboard')
   }
 
   if (!training) return <p className="text-white p-6">Laden…</p>
@@ -183,78 +183,69 @@ export default function ExecuteTrainingPage() {
         {training.type} — {new Date(training.date).toLocaleDateString()}
       </p>
 
-      {training.exercises.map((e: Exercise, exIdx: number) => (
-        <div key={e.id} className="border border-lime-600 rounded p-4 mb-6">
-          <h2 className="text-lime-400 font-semibold mb-3">{e.name}</h2>
+      {training.exercises.map((e: Exercise, exIdx: number) => {
+        const success = performedReps[exIdx].every((r) => (r ?? 0) >= e.reps)
+        const highlight = success ? 'border-green-500' : 'border-lime-600'
 
-          <div className="flex flex-wrap gap-3 mb-4">
-            {performedReps[exIdx].map((rep, setIdx) => {
-              const state = rep === null ? 'idle' : rep === 0 ? 'done' : 'act'
-              const cls =
-                state === 'idle'
-                  ? 'bg-zinc-800 border-zinc-500 text-zinc-500'
-                  : state === 'act'
-                  ? 'bg-lime-600 border-lime-400'
-                  : 'bg-lime-500 text-black border-lime-400'
-              return (
-                <button
-                  key={setIdx}
-                  onClick={() => handleCircle(exIdx, setIdx)}
-                  className={`w-12 h-12 rounded-full border font-bold flex items-center justify-center ${cls}`}
-                >
-                  {rep ?? ''}
-                </button>
-              )
-            })}
+        return (
+          <div key={e.id} className={`border ${highlight} rounded p-4 mb-6`}>
+            <h2 className="text-lime-400 font-semibold mb-3">{e.name}</h2>
+
+            <div className="flex flex-wrap gap-3 mb-4">
+              {performedReps[exIdx].map((rep, setIdx) => {
+                const state = rep === null ? 'idle' : rep === 0 ? 'done' : 'act'
+                const cls =
+                  state === 'idle'
+                    ? 'bg-zinc-800 border-zinc-500 text-zinc-500'
+                    : state === 'act'
+                    ? 'bg-lime-600 border-lime-400'
+                    : 'bg-lime-500 text-black border-lime-400'
+                return (
+                  <button
+                    key={setIdx}
+                    onClick={() => handleCircle(exIdx, setIdx)}
+                    className={`w-12 h-12 rounded-full border font-bold flex items-center justify-center ${cls}`}
+                  >
+                    {rep ?? ''}
+                  </button>
+                )
+              })}
+            </div>
+
+            <p className="text-sm text-zinc-400 mb-2">
+              🕒 Rusttijd: {fmt(restTimers[e.id] ?? 0)} / {fmt(e.rest)}
+            </p>
+
+            <textarea
+              className="w-full bg-zinc-800 text-white border border-zinc-700 rounded p-2 text-sm mb-2"
+              placeholder="Opmerkingen voor deze oefening..."
+              value={notes[exIdx]}
+              onChange={(e) => handleNoteChange(exIdx, e.target.value)}
+            />
+
+            <table className="w-full text-sm text-zinc-300 mb-2">
+              <thead>
+                <tr className="bg-zinc-800">
+                  <th className="text-left p-1">Sets</th>
+                  <th className="p-1">Reps</th>
+                  <th className="p-1">Gewicht (kg)</th>
+                  <th className="p-1">Rust (s)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="p-1">{e.sets}</td>
+                  <td className="p-1">{e.reps}</td>
+                  <td className="p-1">{e.weight}</td>
+                  <td className="p-1">{e.rest}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
+        )
+      })}
 
-          <p className="text-sm text-zinc-400 mb-2">
-            🕒 Rusttijd: {fmt(restTimers[e.id] ?? 0)} / {fmt(e.rest)}
-          </p>
-
-          <table className="w-full text-sm text-zinc-300 mb-2">
-            <thead>
-              <tr className="bg-zinc-800">
-                <th className="text-left p-1">Sets</th>
-                <th className="p-1">Reps</th>
-                <th className="p-1">Gewicht (kg)</th>
-                <th className="p-1">Rust (s)</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td className="p-1">{e.sets}</td>
-                <td className="p-1">
-                  <input
-                    type="number"
-                    value={e.reps}
-                    className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1"
-                    onChange={(ev) => handleField(e.id, 'reps', parseInt(ev.target.value))}
-                  />
-                </td>
-                <td className="p-1">
-                  <input
-                    type="number"
-                    value={e.weight}
-                    className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1"
-                    onChange={(ev) => handleField(e.id, 'weight', parseInt(ev.target.value))}
-                  />
-                </td>
-                <td className="p-1">
-                  <input
-                    type="number"
-                    value={e.rest}
-                    className="w-16 bg-zinc-900 border border-zinc-700 rounded px-2 py-1"
-                    onChange={(ev) => handleField(e.id, 'rest', parseInt(ev.target.value))}
-                  />
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      ))}
-
-      <Button onClick={handleFinish}>Training afronden</Button>
+      <Button onClick={handleFinish}>✅ Training afronden en herhalen</Button>
     </div>
   )
 }

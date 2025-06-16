@@ -1,56 +1,40 @@
+// ✅ saveTraining.ts – verwerkt previous_exercise_id en slaat training + oefeningen op
+
 import { supabase } from './supabaseClient'
 import { v4 as uuidv4 } from 'uuid'
+import type { Training, Exercise } from '@/app/types/training'
 
-export async function saveTraining(training: {
-  id: string
-  userId: string
-  date: string
-  type: string
-  notes?: string
-  exercises: {
-    name: string
-    sets: number
-    reps: number
-    weight: number
-    rest: number
-    overload: number
-    performedReps: number[]
-    notes?: string
-    useCustom: boolean
-    previous_exercise_id?: string | null
-  }[]
-}) {
-  const { id, userId, date, type, notes, exercises } = training
+export async function saveTraining(training: Training) {
+  const { id, userId, type, notes, date, exercises } = training
 
   // 🔹 1. Training opslaan
-  const { error: tErr } = await supabase.from('trainings').insert([
-    {
-      id,
-      user_id: userId,
-      date,
-      type,
-      notes,
-    },
-  ])
-  if (tErr) throw tErr
+  const { error: trainingError } = await supabase.from('trainings').insert({
+    id,
+    user_id: userId,
+    type,
+    notes,
+    date,
+  })
 
-  // 🔹 2. Oefeningen koppelen aan training_id + nieuwe UUID + user_id
-  const oefeningenMetId = exercises.map((oef) => ({
+  if (trainingError) throw new Error('Fout bij opslaan training: ' + trainingError.message)
+
+  // 🔹 2. Oefeningen opslaan (incl. previous_exercise_id als die er is)
+  const oefeningenInDb = exercises.map((ex) => ({
     id: uuidv4(),
     training_id: id,
     user_id: userId,
-    name: oef.name,
-    sets: oef.sets,
-    reps: oef.reps,
-    weight: oef.weight,
-    rest: oef.rest,
-    overload: oef.overload,
-    performed_reps: oef.performedReps,
-    notes: oef.notes,
-    use_custom: oef.useCustom,
-    previous_exercise_id: oef.previous_exercise_id ?? null,
+    name: ex.name,
+    sets: ex.sets,
+    reps: ex.reps,
+    weight: ex.weight,
+    rest: ex.rest,
+    overload: ex.overload ?? 2.5,
+    performed_reps: ex.performedReps ?? [],
+    notes: ex.notes,
+    use_custom: ex.useCustom ?? false,
+    previous_exercise_id: ex.previous_exercise_id ?? null,
   }))
 
-  const { error: eErr } = await supabase.from('exercises').insert(oefeningenMetId)
-  if (eErr) throw eErr
+  const { error: oefError } = await supabase.from('exercises').insert(oefeningenInDb)
+  if (oefError) throw new Error('Fout bij opslaan oefeningen: ' + oefError.message)
 }
