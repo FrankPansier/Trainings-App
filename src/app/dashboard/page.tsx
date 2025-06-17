@@ -1,3 +1,5 @@
+// ✅ Bestand: dashboard/page.tsx
+
 'use client'
 
 import { useEffect, useState } from 'react'
@@ -19,41 +21,54 @@ export default function DashboardPage() {
     }
   }, [user, isLoading, router])
 
-  useEffect(() => {
-    const fetchTrainings = async () => {
-      if (!user) return
+  const fetchTrainings = async () => {
+    if (!user) return
 
-      const { data, error } = await supabase
-        .from('trainings')
-        .select(`
+    const { data, error } = await supabase
+      .from('trainings')
+      .select(`
+        id,
+        date,
+        type,
+        name,
+        user_id,
+        exercises (
           id,
-          type,
-          date,
           name,
-          notes,
-          user_id,
-          exercises:exercises (
-            id,
-            name,
-            sets,
-            reps,
-            weight,
-            rest
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('date', { ascending: false })
+          sets,
+          reps,
+          weight,
+          rest
+        )
+      `)
+      .eq('user_id', user.id)
+      .order('date', { ascending: false })
 
-      if (error) {
-        console.error('❌ Fout bij ophalen trainingen:', error.message)
-      } else {
-        setTrainings(data as Training[])
-      }
-      setLoadingTrainings(false)
+    if (error) {
+      console.error('❌ Fout bij ophalen trainingen:', error.message)
+    } else {
+      setTrainings(data as Training[])
     }
 
+    setLoadingTrainings(false)
+  }
+
+  useEffect(() => {
     fetchTrainings()
   }, [user])
+
+  const deleteTraining = async (id: string) => {
+    const confirmed = confirm('Weet je zeker dat je deze training wilt verwijderen?')
+    if (!confirmed) return
+
+    const { error } = await supabase.from('trainings').delete().eq('id', id)
+
+    if (error) {
+      alert('Fout bij verwijderen: ' + error.message)
+    } else {
+      setTrainings((prev) => prev.filter((t) => t.id !== id))
+    }
+  }
 
   if (isLoading || !user) {
     return <p className="text-center mt-10 text-white">Laden...</p>
@@ -61,7 +76,10 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-4 text-white">
-      <h1 className="text-2xl font-bold mb-6 text-center">👋 Welkom {user.email}</h1>
+      <h1 className="text-2xl font-bold mb-2 text-center">👋 Welkom {user.email}</h1>
+      <p className="text-center text-sm text-gray-400 mb-6">
+        👤 Je bent ingelogd als: {user?.id}
+      </p>
 
       <div className="flex justify-center mb-8">
         <Link
@@ -90,11 +108,16 @@ export default function DashboardPage() {
                 key={training.id}
                 className="bg-[#1a2236] rounded p-4 border border-gray-700"
               >
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm px-2 py-1 rounded text-white bg-gray-600">
-                    {training.type}
-                  </span>
-                  <span className="text-sm text-gray-400">📅 {formattedDate}</span>
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-lg font-bold">
+                      {training.name || '📝 Naamloze training'}
+                    </p>
+                    <span className="text-sm px-2 py-1 rounded text-white bg-gray-600 inline-block mt-1">
+                      {training.type}
+                    </span>
+                  </div>
+                  <span className="text-sm text-gray-400 mt-1">📅 {formattedDate}</span>
                 </div>
 
                 <p className="text-sm text-gray-300 mb-2">💪 {oefCount} oefeningen</p>
@@ -143,12 +166,12 @@ export default function DashboardPage() {
                   >
                     ▶️ Training uitvoeren
                   </Link>
-                  <Link
-                    href={`/training/verwijderen?id=${training.id}`}
+                  <button
+                    onClick={() => deleteTraining(training.id)}
                     className="text-red-400 underline"
                   >
                     ❌ Verwijder training
-                  </Link>
+                  </button>
                 </div>
               </li>
             )

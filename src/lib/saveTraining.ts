@@ -1,17 +1,16 @@
-// ✅ saveTraining.ts – verwerkt previous_exercise_id en slaat training + oefeningen op
-
 import { supabase } from './supabaseClient'
 import { v4 as uuidv4 } from 'uuid'
 import type { Training, Exercise } from '@/app/types/training'
 
 export async function saveTraining(training: Training) {
-  const { id, userId, type, notes, date, exercises } = training
+  const { id, userId, type, name, notes, date, exercises } = training
 
-  // 🔹 1. Training opslaan
+  // 🔹 1. Training opslaan inclusief name
   const { error: trainingError } = await supabase.from('trainings').insert({
     id,
     user_id: userId,
     type,
+    name, // <-- deze regel ontbrak
     notes,
     date,
   })
