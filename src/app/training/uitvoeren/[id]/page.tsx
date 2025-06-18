@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { Button } from '@/components/ui/button'
@@ -18,14 +18,6 @@ interface Exercise {
   useCustom?: boolean
 }
 
-const debounce = <T extends (...args: any[]) => void>(fn: T, ms = 600) => {
-  let h: NodeJS.Timeout
-  return (...args: Parameters<T>) => {
-    clearTimeout(h)
-    h = setTimeout(() => fn(...args), ms)
-  }
-}
-
 const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 
 export default function ExecuteTrainingPage() {
@@ -38,7 +30,7 @@ export default function ExecuteTrainingPage() {
   const [startTime] = useState(Date.now())
   const [elapsed, setElapsed] = useState(0)
   const [restTimers, setRestTimers] = useState<Record<string, number | null>>({})
-
+  const restIntervals = useRef<Record<string, NodeJS.Timeout>>({})
   const trainingRef = useRef<any>()
   const beepRef = useRef<HTMLAudioElement>(null)
 
@@ -47,47 +39,26 @@ export default function ExecuteTrainingPage() {
   }, [training])
 
   useEffect(() => {
-    const id = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000)
-    return () => clearInterval(id)
+    const interval = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000)
+    return () => clearInterval(interval)
   }, [startTime])
 
   useEffect(() => {
-    const id = setInterval(() => {
-      setRestTimers((prev) => {
-        const cur = trainingRef.current
-        if (!cur) return prev
-        const next = { ...prev }
-        cur.exercises.forEach((e: Exercise) => {
-          if (prev[e.id] !== null) {
-            const v = (prev[e.id] ?? 0) + 1
-            if (v === e.rest && beepRef.current) beepRef.current.play().catch(() => {})
-            next[e.id] = v
-          }
-        })
-        return next
-      })
-    }, 1000)
-    return () => clearInterval(id)
-  }, [])
-
-  useEffect(() => {
     if (!id) return
-
-    ;(async () => {
-      const { data: trainingData, error: trainingError } = await supabase
+    (async () => {
+      const { data, error } = await supabase
         .from('trainings')
         .select('*, exercises(*)')
         .eq('id', id)
         .single()
 
-      if (trainingError || !trainingData) {
-        console.error('❌ Fout bij ophalen training:', trainingError?.message)
+      if (error || !data) {
+        console.error('Fout bij ophalen training:', error?.message)
         return
       }
 
-      const exercises: Exercise[] = trainingData.exercises ?? []
-
-      setTraining({ ...trainingData, exercises })
+      const exercises: Exercise[] = data.exercises ?? []
+      setTraining({ ...data, exercises })
       setPerformedReps(exercises.map((e) => Array(e.sets).fill(null)))
       setNotes(exercises.map((e) => e.notes ?? ''))
 
@@ -97,15 +68,28 @@ export default function ExecuteTrainingPage() {
     })()
   }, [id])
 
+  const startRestTimer = (exerciseId: string, targetRest: number) => {
+    clearInterval(restIntervals.current[exerciseId])
+    setRestTimers((prev) => ({ ...prev, [exerciseId]: 0 }))
+
+    restIntervals.current[exerciseId] = setInterval(() => {
+      setRestTimers((prev) => {
+        const current = (prev[exerciseId] ?? 0) + 1
+        if (current === targetRest && beepRef.current) beepRef.current.play().catch(() => {})
+        return { ...prev, [exerciseId]: current }
+      })
+    }, 1000)
+  }
+
   const handleCircle = (exIdx: number, setIdx: number) => {
+    const exerciseId = training.exercises[exIdx].id
+    startRestTimer(exerciseId, training.exercises[exIdx].rest)
+
     setPerformedReps((prev) => {
       const cp = prev.map((arr) => [...arr])
       const cur = cp[exIdx][setIdx]
       const max = training.exercises[exIdx].reps
       cp[exIdx][setIdx] = cur === null ? max : cur > 0 ? cur - 1 : null
-      if (cp[exIdx][setIdx] === 0) {
-        setRestTimers((rt) => ({ ...rt, [training.exercises[exIdx].id]: 0 }))
-      }
       return cp
     })
   }
@@ -120,6 +104,7 @@ export default function ExecuteTrainingPage() {
 
   const handleFinish = async () => {
     if (!training) return
+
     const newId = crypto.randomUUID()
     const today = new Date().toISOString()
 
@@ -151,6 +136,7 @@ export default function ExecuteTrainingPage() {
       date: today,
       type: training.type,
       notes: training.notes ?? '',
+      name: training.name ?? 'Naamloze training',
     })
 
     if (tErr) {
@@ -168,28 +154,37 @@ export default function ExecuteTrainingPage() {
     router.push('/dashboard')
   }
 
+  const handleCancel = () => {
+    router.push('/dashboard')
+  }
+
   if (!training) return <p className="text-white p-6">Laden…</p>
 
   return (
     <div className="max-w-3xl mx-auto p-4 text-white">
       <audio ref={beepRef} src="/beep.mp3" preload="auto" />
 
-      <div className="sticky top-0 bg-black font-mono text-lime-400 text-center p-2 mb-4">
-        ⏱️ Tijd: {fmt(elapsed)}
+      <div className="flex justify-center mb-4">
+        <div className="inline-flex items-center px-3 py-1 bg-lime-600 text-black font-mono text-sm rounded-full shadow-sm">
+          ⏱️ {fmt(elapsed)}
+        </div>
       </div>
 
       <h1 className="text-2xl font-bold mb-4">Training uitvoeren</h1>
       <p className="text-sm text-zinc-400 mb-6">
-        {training.type} — {new Date(training.date).toLocaleDateString()}
+        {training.name ?? 'Naamloze training'} — {new Date(training.date).toLocaleDateString()}
       </p>
 
       {training.exercises.map((e: Exercise, exIdx: number) => {
         const success = performedReps[exIdx].every((r) => (r ?? 0) >= e.reps)
-        const highlight = success ? 'border-green-500' : 'border-lime-600'
+        const highlight = success ? 'border-green-500' : 'border-lime-400/60'
 
         return (
-          <div key={e.id} className={`border ${highlight} rounded p-4 mb-6`}>
-            <h2 className="text-lime-400 font-semibold mb-3">{e.name}</h2>
+          <div key={e.id} className={`border ${highlight} rounded-lg bg-[#1e1e1e] p-4 mb-6 shadow-md`}>
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lime-400 font-semibold text-lg">{e.name}</h2>
+              <span className="text-xs text-zinc-400">{e.sets} sets • {e.reps} reps</span>
+            </div>
 
             <div className="flex flex-wrap gap-3 mb-4">
               {performedReps[exIdx].map((rep, setIdx) => {
@@ -199,53 +194,59 @@ export default function ExecuteTrainingPage() {
                     ? 'bg-zinc-800 border-zinc-500 text-zinc-500'
                     : state === 'act'
                     ? 'bg-lime-600 border-lime-400'
-                    : 'bg-lime-500 text-black border-lime-400'
+                    : 'bg-green-500 text-black border-lime-400'
                 return (
                   <button
                     key={setIdx}
                     onClick={() => handleCircle(exIdx, setIdx)}
-                    className={`w-12 h-12 rounded-full border font-bold flex items-center justify-center ${cls}`}
+                    className={`set-circle ${cls} border flex items-center justify-center`}
                   >
-                    {rep ?? ''}
+                    {rep !== null ? rep : setIdx + 1}
                   </button>
                 )
               })}
             </div>
 
-            <p className="text-sm text-zinc-400 mb-2">
-              🕒 Rusttijd: {fmt(restTimers[e.id] ?? 0)} / {fmt(e.rest)}
-            </p>
+            <div className="text-sm mb-3">
+              <p className="text-zinc-400">
+                🕒 Rusttijd: {fmt(restTimers[e.id] ?? 0)} / {fmt(e.rest)}{' '}
+                {restTimers[e.id] !== null && restTimers[e.id] >= e.rest && (
+                  <span className="text-green-400 ml-2 font-semibold">🔔 Tijd om te liften!</span>
+                )}
+              </p>
+            </div>
 
-            <textarea
-              className="w-full bg-zinc-800 text-white border border-zinc-700 rounded p-2 text-sm mb-2"
-              placeholder="Opmerkingen voor deze oefening..."
-              value={notes[exIdx]}
-              onChange={(e) => handleNoteChange(exIdx, e.target.value)}
-            />
+            <details className="mb-4">
+              <summary className="cursor-pointer text-sm text-zinc-300 mb-1">📝 Voeg een opmerking toe</summary>
+              <textarea
+                className="w-full bg-zinc-800 text-white border border-zinc-700 rounded p-2 text-sm mt-2"
+                placeholder="Bijv. focus op houding, ademhaling, etc."
+                value={notes[exIdx]}
+                onChange={(e) => handleNoteChange(exIdx, e.target.value)}
+              />
+            </details>
 
-            <table className="w-full text-sm text-zinc-300 mb-2">
-              <thead>
-                <tr className="bg-zinc-800">
-                  <th className="text-left p-1">Sets</th>
-                  <th className="p-1">Reps</th>
-                  <th className="p-1">Gewicht (kg)</th>
-                  <th className="p-1">Rust (s)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="p-1">{e.sets}</td>
-                  <td className="p-1">{e.reps}</td>
-                  <td className="p-1">{e.weight}</td>
-                  <td className="p-1">{e.rest}</td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="text-xs text-zinc-400">
+              {e.weight} kg • {e.rest}s rust
+            </div>
           </div>
         )
       })}
 
-      <Button onClick={handleFinish}>✅ Training afronden en herhalen</Button>
+      <div className="flex gap-4 justify-between mt-6">
+        <Button onClick={handleFinish} className="bg-green-600 hover:bg-green-500">✅ Training afronden en herhalen</Button>
+        <Button variant="outline" onClick={handleCancel}>❌ Annuleren</Button>
+      </div>
+
+      <style jsx>{`
+        .set-circle {
+          width: 48px;
+          height: 48px;
+          border-radius: 9999px;
+          font-weight: bold;
+          transition: all 0.2s ease-in-out;
+        }
+      `}</style>
     </div>
   )
 }
