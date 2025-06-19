@@ -9,7 +9,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import ExerciseCard, { Exercise } from '@/components/ExerciseCard'
 import { Input } from '@/components/ui/input'
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
 import Link from 'next/link'
 
 export default function CreateTrainingLogPage() {
@@ -89,7 +94,7 @@ export default function CreateTrainingLogPage() {
       userId: user.id,
       date: new Date().toISOString(),
       type,
-      name,
+      name: name.trim() !== '' ? name : 'Naamloze training',
       notes,
       exercises,
     }
@@ -216,7 +221,12 @@ export default function CreateTrainingLogPage() {
                           className="bg-transparent border-b border-lime-400 w-16 focus:outline-none text-white"
                           value={exercise.weight}
                           onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => updateExercise(i, { ...exercise, weight: parseFloat(e.target.value) })}
+                          onChange={(e) =>
+                            updateExercise(i, {
+                              ...exercise,
+                              weight: parseFloat(e.target.value),
+                            })
+                          }
                         />
                       </div>
                     </div>

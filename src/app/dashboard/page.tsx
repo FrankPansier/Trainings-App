@@ -12,6 +12,7 @@ export default function DashboardPage() {
   const router = useRouter()
   const [trainings, setTrainings] = useState<Training[]>([])
   const [loadingTrainings, setLoadingTrainings] = useState(true)
+  const [lastTraining, setLastTraining] = useState<Training | null>(null)
 
   useEffect(() => {
     if (!isLoading && !user) {
@@ -19,41 +20,66 @@ export default function DashboardPage() {
     }
   }, [user, isLoading, router])
 
-  useEffect(() => {
-    const fetchTrainings = async () => {
-      if (!user) return
+  const fetchTrainings = async () => {
+    if (!user) return
 
-      const { data, error } = await supabase
-        .from('trainings')
-        .select(`
+    const { data, error } = await supabase
+      .from('trainings')
+      .select(`
+        id,
+        date,
+        type,
+        name,
+        user_id,
+        exercises (
           id,
-          type,
-          date,
           name,
-          notes,
-          user_id,
-          exercises:exercises (
-            id,
-            name,
-            sets,
-            reps,
-            weight,
-            rest
-          )
-        `)
-        .eq('user_id', user.id)
-        .order('date', { ascending: false })
+          sets,
+          reps,
+          weight,
+          rest
+        )
+      `)
+      .eq('user_id', user.id)
+      .order('date', { ascending: false })
 
-      if (error) {
-        console.error('❌ Fout bij ophalen trainingen:', error.message)
-      } else {
-        setTrainings(data as Training[])
+    if (error) {
+      console.error('Fout bij ophalen trainingen:', error.message)
+    } else {
+      const uniqueTrainings: Training[] = []
+      const seenNames = new Set<string>()
+
+      for (const training of data as Training[]) {
+        const name = training.name ?? 'Naamloze training'
+        if (!seenNames.has(name)) {
+          seenNames.add(name)
+          uniqueTrainings.push(training)
+        }
       }
-      setLoadingTrainings(false)
+
+      setTrainings(uniqueTrainings)
+      if (data.length > 0) setLastTraining(data[0])
     }
 
+    setLoadingTrainings(false)
+  }
+
+  useEffect(() => {
     fetchTrainings()
   }, [user])
+
+  const deleteTraining = async (id: string) => {
+    const confirmed = confirm('Weet je zeker dat je deze training wilt verwijderen?')
+    if (!confirmed) return
+
+    const { error } = await supabase.from('trainings').delete().eq('id', id)
+
+    if (error) {
+      alert('Fout bij verwijderen: ' + error.message)
+    } else {
+      setTrainings((prev) => prev.filter((t) => t.id !== id))
+    }
+  }
 
   if (isLoading || !user) {
     return <p className="text-center mt-10 text-white">Laden...</p>
@@ -61,19 +87,30 @@ export default function DashboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-4 text-white">
-      <h1 className="text-2xl font-bold mb-6 text-center">👋 Welkom {user.email}</h1>
-
-      <div className="flex justify-center mb-8">
-        <Link
-          href="/training/aanmaken"
-          className="bg-lime-600 hover:bg-lime-700 text-center py-3 px-6 rounded"
-        >
-          ➕ Nieuwe training aanmaken
-        </Link>
+      <div className="flex items-center gap-4 mb-6">
+        <div className="w-14 h-14 rounded-full bg-gray-600 flex items-center justify-center text-xl font-bold">
+          {user.email?.charAt(0).toUpperCase()}
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold">Welkom {user.email}</h1>
+          {lastTraining && (
+            <p className="text-sm text-gray-400">
+              Laatst getraind op: {new Date(lastTraining.date).toLocaleDateString('nl-NL')} – {lastTraining.name}
+            </p>
+          )}
+        </div>
       </div>
 
       <section>
-        <h2 className="text-xl font-semibold mb-3">📋 Aangemaakte trainingen</h2>
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Aangemaakte trainingen</h2>
+          <Link
+            href="/training/aanmaken"
+            className="bg-[#73b847] hover:bg-[#5da639] text-black font-semibold text-sm py-2 px-4 rounded shadow transition"
+          >
+            ➕ Nieuwe training
+          </Link>
+        </div>
 
         {loadingTrainings && <p>Laden...</p>}
         {!loadingTrainings && trainings.length === 0 && (
@@ -88,16 +125,19 @@ export default function DashboardPage() {
             return (
               <li
                 key={training.id}
-                className="bg-[#1a2236] rounded p-4 border border-gray-700"
+                className="bg-[#1f1f1f] rounded-xl p-4 border border-[#3e3e3e] shadow-[0_2px_12px_rgba(0,0,0,0.2)] transition hover:-translate-y-0.5"
               >
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm px-2 py-1 rounded text-white bg-gray-600">
-                    {training.type}
-                  </span>
-                  <span className="text-sm text-gray-400">📅 {formattedDate}</span>
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-lg font-bold flex items-center gap-2">🏋️‍♂️ {training.name || 'Naamloze training'}</p>
+                    <span className="text-sm px-2 py-1 rounded text-white bg-gray-700 inline-block mt-1">
+                      {training.type}
+                    </span>
+                  </div>
+                  <span className="text-sm text-gray-400 mt-1 flex items-center gap-1">📅 {formattedDate}</span>
                 </div>
 
-                <p className="text-sm text-gray-300 mb-2">💪 {oefCount} oefeningen</p>
+                <p className="text-sm text-gray-300 mb-2">{oefCount} oefeningen</p>
 
                 {oefCount > 0 && (
                   <table className="w-full text-sm text-zinc-300 mb-3">
@@ -112,8 +152,8 @@ export default function DashboardPage() {
                     </thead>
                     <tbody>
                       {training.exercises.map((ex) => (
-                        <tr key={ex.id}>
-                          <td className="p-1">{ex.name}</td>
+                        <tr key={ex.id} className="border-t border-zinc-700">
+                          <td className="p-1 text-white">{ex.name}</td>
                           <td className="p-1 text-center">{ex.sets}</td>
                           <td className="p-1 text-center">{ex.reps}</td>
                           <td className="p-1 text-center">{ex.weight}</td>
@@ -124,31 +164,25 @@ export default function DashboardPage() {
                   </table>
                 )}
 
-                <div className="mt-2 flex gap-4 text-sm flex-wrap">
-                  <Link
-                    href={`/training/herhalen?id=${training.id}`}
-                    className="text-blue-400 underline"
-                  >
-                    ➕ Volgende training
-                  </Link>
+                <div className="mt-2 flex gap-3 flex-wrap text-sm">
                   <Link
                     href={`/progress/${training.name ?? training.id}`}
-                    className="text-yellow-400 underline"
+                    className="flex items-center gap-1 text-yellow-400 hover:text-yellow-300"
                   >
-                    🧾 Bekijk geschiedenis
+                    📈 Geschiedenis
                   </Link>
                   <Link
                     href={`/training/uitvoeren/${training.id}`}
-                    className="text-green-400 underline"
+                    className="flex items-center gap-1 text-green-400 hover:text-green-300"
                   >
-                    ▶️ Training uitvoeren
+                    ▶️ Uitvoeren
                   </Link>
-                  <Link
-                    href={`/training/verwijderen?id=${training.id}`}
-                    className="text-red-400 underline"
+                  <button
+                    onClick={() => deleteTraining(training.id)}
+                    className="flex items-center gap-1 text-red-400 hover:text-red-300"
                   >
-                    ❌ Verwijder training
-                  </Link>
+                    🗑️ Verwijderen
+                  </button>
                 </div>
               </li>
             )
